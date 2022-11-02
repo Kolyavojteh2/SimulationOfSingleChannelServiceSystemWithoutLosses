@@ -31,6 +31,10 @@ SingleChannelServiceSystemWithoutLosses::SingleChannelServiceSystemWithoutLosses
     QPushButton* p_button_compareIndicators = new QPushButton(tr("Додати на графіки порівняння характеристик"));
     connect(p_button_compareIndicators, SIGNAL(clicked()),
             this, SLOT(slot_addToCompare()));
+    connect(p_lineEdit_lambda, SIGNAL(returnPressed()),
+            p_button_compareIndicators, SLOT(click()));
+    connect(p_lineEdit_st, SIGNAL(returnPressed()),
+            p_button_compareIndicators, SLOT(click()));
 
     QGridLayout* p_inputGrid = new QGridLayout;
     p_inputGrid->addWidget(p_lbl_lambda, 0, 0);
@@ -40,6 +44,7 @@ SingleChannelServiceSystemWithoutLosses::SingleChannelServiceSystemWithoutLosses
     p_inputGrid->addWidget(p_lineEdit_st, 1, 1);
 
     p_inputGrid->addWidget(p_button_calculate, 2, 0);
+    p_inputGrid->addWidget(p_button_compareIndicators, 2, 1);
 
     QGroupBox* p_inputGroup = new QGroupBox(tr("Вхідні дані:"));
     p_inputGroup->setLayout(p_inputGrid);
@@ -63,6 +68,7 @@ SingleChannelServiceSystemWithoutLosses::SingleChannelServiceSystemWithoutLosses
 
     this->setCentralWidget(new QWidget);
     this->centralWidget()->setLayout(p_windowBox);
+    this->setWindowTitle(tr("Моделювання одноканальної системи без втрат"));
 }
 
 SingleChannelServiceSystemWithoutLosses::PerformanceIndicators SingleChannelServiceSystemWithoutLosses::simulateSystem(const InputData input)
@@ -93,6 +99,13 @@ SingleChannelServiceSystemWithoutLosses::PerformanceIndicators SingleChannelServ
     indicators.q = 1.0 - indicators.P0;
 
     return indicators;
+}
+
+void SingleChannelServiceSystemWithoutLosses::closeEvent(QCloseEvent* event)
+{
+    Q_UNUSED(event)
+
+    QApplication::exit(0);
 }
 
 void SingleChannelServiceSystemWithoutLosses::slot_simulateSystem()
@@ -143,28 +156,128 @@ void SingleChannelServiceSystemWithoutLosses::slot_addToCompare()
 
     auto indicators = simulateSystem(inputData);
 
-    /// Доробити адаптовані графіки
+    if (!p_compareWidget)
+    {
+        p_compareWidget = new QWidget;
 
-    if (!p_compareCharts)
-        p_compareCharts = new QWidget;
+        auto initChart = [](const QString tittle) -> QChart*
+        {
+            QChart* chart = new QChart;
+            chart->setTitle(tittle);
+            chart->addSeries(new QBarSeries);
+            chart->setAnimationOptions(QChart::SeriesAnimations);
 
-    QBarSet* p_barset_L = new QBarSet("L");
-    QBarSet* p_barset_Lq = new QBarSet("Lq");
-    QBarSet* p_barset_W = new QBarSet("W");
-    QBarSet* p_barset_Wq = new QBarSet("Wq");
-    QBarSet* p_barset_B = new QBarSet("B");
-    QBarSet* p_barset_P0 = new QBarSet("P0");
-    QBarSet* p_barset_q = new QBarSet("q");
+            QStringList categories;
+            categories << "";
+            QBarCategoryAxis *axisX = new QBarCategoryAxis();
+            axisX->append(categories);
+            chart->addAxis(axisX, Qt::AlignBottom);
+            dynamic_cast<QBarSeries*>(chart->series().takeFirst())->attachAxis(axisX);
 
-    p_barset_L->append(indicators.L);
-    p_barset_Lq->append(indicators.Lq);
-    p_barset_W->append(indicators.W);
-    p_barset_Wq->append(indicators.Wq);
-    p_barset_B->append(indicators.B);
-    p_barset_P0->append(indicators.P0);
-    p_barset_q->append(indicators.q);
+            QValueAxis *axisY = new QValueAxis();
+            axisY->setRange(0, 1);
+            chart->addAxis(axisY, Qt::AlignLeft);
+            dynamic_cast<QBarSeries*>(chart->series().takeFirst())->attachAxis(axisY);
 
+            chart->legend()->setVisible(true);
+            chart->legend()->setAlignment(Qt::AlignmentFlag::AlignRight);
 
+            return chart;
+        };
 
+        p_compareChart_L = initChart("L");
+        p_compareChart_Lq = initChart("Lq");
+        p_compareChart_W = initChart("W");
+        p_compareChart_Wq = initChart("Wq");
+        p_compareChart_B = initChart("B");
+        p_compareChart_P0 = initChart("P0");
+        p_compareChart_q = initChart("q");
 
+        auto initChartView = [](QChart* chart) -> QChartView*
+        {
+            QChartView* p_view = new QChartView(chart);
+            p_view->setRenderHint(QPainter::Antialiasing);
+
+            return p_view;
+        };
+
+        QChartView* p_view_L = initChartView(p_compareChart_L);
+        QChartView* p_view_Lq = initChartView(p_compareChart_Lq);
+        QChartView* p_view_W = initChartView(p_compareChart_W);
+        QChartView* p_view_Wq = initChartView(p_compareChart_Wq);
+        QChartView* p_view_B = initChartView(p_compareChart_B);
+        QChartView* p_view_P0 = initChartView(p_compareChart_P0);
+        QChartView* p_view_q = initChartView(p_compareChart_q);
+
+        QGridLayout* p_gridCharts = new QGridLayout;
+        p_gridCharts->addWidget(p_view_L, 0, 0);
+        p_gridCharts->addWidget(p_view_Lq, 0, 1);
+        p_gridCharts->addWidget(p_view_W, 0, 2);
+        p_gridCharts->addWidget(p_view_Wq, 1, 0);
+        p_gridCharts->addWidget(p_view_B, 1, 1);
+        p_gridCharts->addWidget(p_view_P0, 1, 2);
+        p_gridCharts->addWidget(p_view_q, 2, 0);
+
+        p_compareWidget->setLayout(p_gridCharts);
+        p_compareWidget->setWindowState(Qt::WindowState::WindowMaximized);
+        p_compareWidget->setWindowTitle(tr("Графіки порівняння"));
+        p_compareWidget->show();
+    }
+
+    auto findMaxFromChart = [](QChart* chart) -> float
+    {
+        auto sets = dynamic_cast<QBarSeries*>(chart->series().takeFirst())->barSets();
+
+        float max_value = 0.0;
+        for (auto &current_set : sets)
+        {
+            for (int i = 0; i < current_set->count(); i++)
+            {
+                if (max_value < current_set->at(i))
+                    max_value = current_set->at(i);
+            }
+        }
+
+        return max_value;
+    };
+
+    auto findMinFromChart = [](QChart* chart) -> float
+    {
+        auto sets = dynamic_cast<QBarSeries*>(chart->series().takeFirst())->barSets();
+
+        float min_value = 0.0;
+        for (auto &current_set : sets)
+        {
+            for (int i = 0; i < current_set->count(); i++)
+            {
+                if (min_value > current_set->at(i))
+                    min_value = current_set->at(i);
+            }
+        }
+
+        return min_value;
+    };
+
+    auto fillChart = [&findMaxFromChart, &findMinFromChart](QChart* chart, InputData input, float value) {
+        QBarSet* p_set = new QBarSet(QString("lambda=%1 (1/u)=%2").arg(input.lambda).arg(input.st));
+        p_set->append(value);
+
+        dynamic_cast<QBarSeries*>(chart->series().takeFirst())->append(p_set);
+
+        int maxRangeValue = ceil(findMaxFromChart(chart));
+        chart->axes(Qt::Vertical).takeFirst()->setMax(maxRangeValue);
+
+        int minRangeValue = findMinFromChart(chart);
+        chart->axes(Qt::Vertical).takeFirst()->setMin(minRangeValue);
+    };
+
+    fillChart(p_compareChart_L, inputData, indicators.L);
+    fillChart(p_compareChart_Lq, inputData, indicators.Lq);
+    fillChart(p_compareChart_W, inputData, indicators.W);
+    fillChart(p_compareChart_Wq, inputData, indicators.Wq);
+    fillChart(p_compareChart_B, inputData, indicators.B);
+    fillChart(p_compareChart_P0, inputData, indicators.P0);
+    fillChart(p_compareChart_q, inputData, indicators.q);
+
+    p_compareWidget->show();
 }
